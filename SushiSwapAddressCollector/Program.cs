@@ -4,8 +4,9 @@ using SushiSwapAddressCollector.Models;
 using System.Text.Json;
 
 const string FactoryAddress = "0xc35DADB65012eC5796536bD9864eD8773aBc74C4";
+const string RPCUrl = "https://arb1.arbitrum.io/rpc";
 
-var web3 = new Nethereum.Web3.Web3("https://arb1.arbitrum.io/rpc");
+var web3 = new Nethereum.Web3.Web3(RPCUrl);
 
 var pairCountQueryHandler = web3.Eth.GetContractQueryHandler<SushiSwapFactory.AllPairsLengthFunction>();
 var pairAddressQueryHandler = web3.Eth.GetContractQueryHandler<SushiSwapFactory.AllPairsFunction>();
@@ -42,8 +43,11 @@ for(ulong i = 0; i < pairCount; i++)
 
 string json = JsonSerializer.Serialize(pairAddresses);
 
-await File.WriteAllLinesAsync("SushiPairs.csv", pairAddresses.Select(x => x.ToCSV()));
-await File.WriteAllTextAsync("SushiPairs.json", json);
+Console.WriteLine($"Writing CSV output to {Path.GetFullPath("SushiPair.csv")}");
+await File.WriteAllLinesAsync(Path.GetFullPath("SushiPair.csv"), pairAddresses.Select(x => x.ToCSV()));
+
+Console.WriteLine($"Writing Json output to {Path.GetFullPath("SushiPair.json")}");
+await File.WriteAllTextAsync(Path.GetFullPath("SushiPair.json"), json);
 
 async Task<PairInfo> GetPairInfoAsync(string pairAddress)
 {
