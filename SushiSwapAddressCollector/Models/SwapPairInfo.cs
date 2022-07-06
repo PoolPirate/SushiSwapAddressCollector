@@ -1,12 +1,12 @@
 ﻿namespace SushiSwapAddressCollector.Models;
-public class PairInfo
+public class SwapPairInfo
 {
     public string ContractAddress { get; set; }
 
     public TokenInfo Token0 { get; set; }
     public TokenInfo Token1 { get; set; }
 
-    public PairInfo(string contractAddress, TokenInfo token0, TokenInfo token1)
+    public SwapPairInfo(string contractAddress, TokenInfo token0, TokenInfo token1)
     {
         ContractAddress = contractAddress;
         Token0 = token0;
