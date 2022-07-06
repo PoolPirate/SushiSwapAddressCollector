@@ -9,3 +9,11 @@
 
 ## Build & Run
 - `dotnet run`
+
+
+# Execution Outputs
+- Kashi Pairs:
+https://gist.github.com/PoolPirate/0aee64379fdf5e0191da492eba5679ff
+
+- Swap Pairs:
+https://gist.github.com/PoolPirate/c3121e4a76e6632b6698657ebd1edac6
