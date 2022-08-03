@@ -22,7 +22,6 @@ public static class Extensions
                     throw;
                 }
 
-                Console.WriteLine("Rate Limit Hit, Waiting 10 Seconds...");
                 await Task.Delay(10000);
             }
         }

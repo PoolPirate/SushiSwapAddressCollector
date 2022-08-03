@@ -1,31 +1,38 @@
-﻿using Nethereum.Contracts.ContractHandlers;
+﻿using Common.Services;
+using Microsoft.Extensions.Logging;
+using Nethereum.Contracts.ContractHandlers;
+using Nethereum.JsonRpc.Client;
 using Nethereum.Web3;
-using SushiSwapAddressCollector.Arbiscan;
+using SushiSwapAddressCollector.ApiClient;
+using SushiSwapAddressCollector.Configuration;
 using SushiSwapAddressCollector.Contracts;
 using SushiSwapAddressCollector.Extensions;
 using SushiSwapAddressCollector.Models;
 using System.Text.Json;
 
 namespace SushiSwapAddressCollector.Collectors;
-public class KashiPairAddressCollector : ICollector
+public class KashiPairAddressCollector : Singleton, ICollector
 {
-    private readonly Web3 Web3;
-    private readonly ArbiscanClient Arbiscan;
+    public const string KashiDeployTopic0 = "0xd62166f3c2149208e51788b1401cc356bf5da1fc6c7886a32e18570f57d88b3b";
 
-    private readonly IContractQueryHandler<KashiLendingPair.AssetFunction> AssetQueryHandler;
-    private readonly IContractQueryHandler<KashiLendingPair.CollateralFunction> CollateralQueryHandler;
+    [Inject]
+    private readonly Web3 Web3 = null!;
+    [Inject]
+    private readonly EVMExplorerClient Arbiscan = null!;
+    [Inject]
+    private readonly SushiSwapOptions SushiSwapOptions = null!;
 
-    private readonly IContractQueryHandler<ERC20.DecimalsFunction> DecimalsQueryHandler;
-    private readonly IContractQueryHandler<ERC20.NameFunction> NameQueryHandler;
-    private readonly IContractQueryHandler<ERC20.SymbolFunction> SymbolQueryHandler;
+    private IContractQueryHandler<KashiLendingPair.AssetFunction> AssetQueryHandler = null!;
+    private IContractQueryHandler<KashiLendingPair.CollateralFunction> CollateralQueryHandler = null!;
 
-    private readonly Dictionary<string, TokenInfo> Tokens;
+    private IContractQueryHandler<ERC20.DecimalsFunction> DecimalsQueryHandler = null!;
+    private IContractQueryHandler<ERC20.NameFunction> NameQueryHandler = null!;
+    private IContractQueryHandler<ERC20.SymbolFunction> SymbolQueryHandler = null!;
 
-    public KashiPairAddressCollector()
+    private readonly Dictionary<string, TokenInfo> Tokens = new Dictionary<string, TokenInfo>();
+
+    protected override ValueTask InitializeAsync()
     {
-        Web3 = new Web3(Constants.RPCUrl);
-        Arbiscan = new ArbiscanClient(Constants.ArbiscanAPIKey);
-
         AssetQueryHandler = Web3.Eth.GetContractQueryHandler<KashiLendingPair.AssetFunction>();
         CollateralQueryHandler = Web3.Eth.GetContractQueryHandler<KashiLendingPair.CollateralFunction>();
 
@@ -33,45 +40,45 @@ public class KashiPairAddressCollector : ICollector
         NameQueryHandler = Web3.Eth.GetContractQueryHandler<ERC20.NameFunction>();
         SymbolQueryHandler = Web3.Eth.GetContractQueryHandler<ERC20.SymbolFunction>();
 
-        Tokens = new Dictionary<string, TokenInfo>();
+        return ValueTask.CompletedTask;
     }
 
     public async Task CollectAsync()
     {
         string[] kashiAddresses = await GetKashiPairAddressesAsync();
-        Console.WriteLine($"Found {kashiAddresses.Length} Kashi Pair contracts");
+        Logger.LogInformation("Found {addressCount} Kashi Pair contracts", kashiAddresses.Length);
 
         var kashiPairs = new List<KashiPairInfo>();
 
         foreach (string kashiAddress in kashiAddresses)
         {
-            if (kashiAddress.ToLower() == Constants.KashiMasterContractAddress.ToLower())
+            if (kashiAddress.ToLower() == SushiSwapOptions.KashiMasterContractAddress.ToLower())
             {
-                Console.WriteLine($"Skipping {kashiAddress}, is MasterContract");
+                Logger.LogInformation("Skipping {kashiAddress}, is MasterContract", kashiAddress);
                 continue;
             }
 
-            Console.WriteLine($"Loading Kashi Pair Info for {kashiAddress}");
+            Logger.LogInformation("Loading Kashi Pair Info for {kashiAddress}", kashiAddress);
             var pairInfo = await GetPairInfoAsync(kashiAddress);
             kashiPairs.Add(pairInfo);
         }
 
-        Console.WriteLine($"Writing CSV output to {Path.GetFullPath("SushiKashiPairs.csv")}");
+        Logger.LogInformation("Writing CSV output to {outputFilePath}", Path.GetFullPath("SushiKashiPairs.csv"));
         await File.WriteAllLinesAsync(Path.GetFullPath("SushiKashiPairs.csv"), kashiPairs.Select(x => x.ToCSV()));
 
-        Console.WriteLine($"Writing Json output to {Path.GetFullPath("SushiKashiPairs.json")}");
+        Logger.LogInformation("Writing Json output to {outputFilePath}", Path.GetFullPath("SushiKashiPairs.json"));
         await File.WriteAllTextAsync(Path.GetFullPath("SushiKashiPairs.json"), JsonSerializer.Serialize(kashiPairs));
     }
 
     private async Task<string[]> GetKashiPairAddressesAsync()
     {
-        var events = await Arbiscan.GetPastEventsAsync(Constants.KashiDeployTopic0);
+        var events = await Arbiscan.GetPastEventsAsync(KashiDeployTopic0);
         return events
             .Where(x =>
             {
                 string addressComponent = x.Topics[1][26..];
                 string address = $"0x{addressComponent}".ToLower();
-                return address == Constants.KashiMasterContractAddress.ToLower();
+                return address == SushiSwapOptions.KashiMasterContractAddress.ToLower();
             })
             .Select(x =>
             {
@@ -100,8 +107,18 @@ public class KashiPairAddressCollector : ICollector
         }
 
         ushort decimals = await DecimalsQueryHandler!.QuerySafeAsync<ERC20.DecimalsFunction, ushort>(tokenAddress);
-        string name = await NameQueryHandler!.QuerySafeAsync<ERC20.NameFunction, string>(tokenAddress);
         string symbol = await SymbolQueryHandler!.QuerySafeAsync<ERC20.SymbolFunction, string>(tokenAddress);
+
+        string? name = null;
+
+        try
+        {
+            name = await NameQueryHandler!.QuerySafeAsync<ERC20.NameFunction, string>(tokenAddress);
+        }
+        catch (RpcResponseException)
+        {
+            Logger.LogCritical("Missing 'name' function on ERC-20 Contract at address {address}", tokenAddress);
+        }
 
         tokenInfo = new TokenInfo(tokenAddress, decimals, name, symbol);
         Tokens.Add(tokenAddress, tokenInfo);

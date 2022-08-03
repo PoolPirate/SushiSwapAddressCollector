@@ -1,31 +1,36 @@
-﻿using Nethereum.Contracts.ContractHandlers;
+﻿using Common.Services;
+using Microsoft.Extensions.Logging;
+using Nethereum.Contracts.ContractHandlers;
+using Nethereum.JsonRpc.Client;
 using Nethereum.Web3;
+using SushiSwapAddressCollector.Configuration;
 using SushiSwapAddressCollector.Contracts;
 using SushiSwapAddressCollector.Extensions;
 using SushiSwapAddressCollector.Models;
 using System.Text.Json;
 
 namespace SushiSwapAddressCollector.Collectors;
-public class SwapPairAddressCollector : ICollector
+public class SwapPairAddressCollector : Singleton, ICollector
 {
-    private readonly Web3 Web3;
+    [Inject]
+    private readonly Web3 Web3 = null!;
+    [Inject]
+    private readonly SushiSwapOptions SushiSwapOptions = null!;
 
-    private readonly IContractQueryHandler<SushiSwapFactory.AllPairsLengthFunction> PairCountQueryHandler;
-    private readonly IContractQueryHandler<SushiSwapFactory.AllPairsFunction> PairAddressQueryHandler;
-    
-    private readonly IContractQueryHandler<SushiSwapTradingPair.Token0Function> Token0QueryHandler;
-    private readonly IContractQueryHandler<SushiSwapTradingPair.Token1Function> Token1QueryHandler;
+    private IContractQueryHandler<SushiSwapFactory.AllPairsLengthFunction> PairCountQueryHandler = null!;
+    private IContractQueryHandler<SushiSwapFactory.AllPairsFunction> PairAddressQueryHandler = null!;
 
-    private readonly IContractQueryHandler<ERC20.DecimalsFunction> DecimalsQueryHandler;
-    private readonly IContractQueryHandler<ERC20.NameFunction> NameQueryHandler;
-    private readonly IContractQueryHandler<ERC20.SymbolFunction> SymbolQueryHandler;
+    private IContractQueryHandler<SushiSwapTradingPair.Token0Function> Token0QueryHandler = null!;
+    private IContractQueryHandler<SushiSwapTradingPair.Token1Function> Token1QueryHandler = null!;
 
-    private readonly Dictionary<string, TokenInfo> Tokens;
+    private IContractQueryHandler<ERC20.DecimalsFunction> DecimalsQueryHandler = null!;
+    private IContractQueryHandler<ERC20.NameFunction> NameQueryHandler = null!;
+    private IContractQueryHandler<ERC20.SymbolFunction> SymbolQueryHandler = null!;
 
-    public SwapPairAddressCollector()
+    private readonly Dictionary<string, TokenInfo> Tokens = new Dictionary<string, TokenInfo>();
+
+    protected override ValueTask InitializeAsync()
     {
-        Web3 = new Web3(Constants.RPCUrl);
-
         PairCountQueryHandler = Web3.Eth.GetContractQueryHandler<SushiSwapFactory.AllPairsLengthFunction>();
         PairAddressQueryHandler = Web3.Eth.GetContractQueryHandler<SushiSwapFactory.AllPairsFunction>();
 
@@ -36,37 +41,37 @@ public class SwapPairAddressCollector : ICollector
         NameQueryHandler = Web3.Eth.GetContractQueryHandler<ERC20.NameFunction>();
         SymbolQueryHandler = Web3.Eth.GetContractQueryHandler<ERC20.SymbolFunction>();
 
-        Tokens = new Dictionary<string, TokenInfo>();
+        return ValueTask.CompletedTask;
     }
 
     public async Task CollectAsync()
     {
-        ulong pairCount = await PairCountQueryHandler.QueryAsync<ulong>(Constants.FactoryAddress);
+        ulong pairCount = await PairCountQueryHandler.QueryAsync<ulong>(SushiSwapOptions.FactoryAddress);
 
-        Console.WriteLine($"Found {pairCount} unique trading pairs!");
+        Logger.LogInformation("Found {pairCount} unique trading pairs!", pairCount);
 
         var pairAddresses = new List<SwapPairInfo>();
 
         for (ulong i = 0; i < pairCount; i++)
         {
-            Console.WriteLine($"Querying pair address for pair index {i}");
+            Logger.LogInformation("Querying pair address for pair index {index}", i);
 
             var pairQuery = new SushiSwapFactory.AllPairsFunction()
             {
                 Index = i
             };
 
-            string pairAddress = await PairAddressQueryHandler.QuerySafeAsync<SushiSwapFactory.AllPairsFunction, string>(Constants.FactoryAddress, pairQuery);
-            Console.WriteLine($"Found pair contract at address {pairAddress}");
+            string pairAddress = await PairAddressQueryHandler.QuerySafeAsync<SushiSwapFactory.AllPairsFunction, string>(SushiSwapOptions.FactoryAddress, pairQuery);
+            Logger.LogInformation("Found pair contract at address {pairAddress}", pairAddress);
 
             var pairInfo = await GetPairInfoAsync(pairAddress);
             pairAddresses.Add(pairInfo);
         }
 
-        Console.WriteLine($"Writing CSV output to {Path.GetFullPath("SushiSwapPairs.csv")}");
+        Logger.LogInformation("Writing CSV output to {outputFilePath}", Path.GetFullPath("SushiSwapPairs.csv"));
         await File.WriteAllLinesAsync(Path.GetFullPath("SushiSwapPairs.csv"), pairAddresses.Select(x => x.ToCSV()));
 
-        Console.WriteLine($"Writing Json output to {Path.GetFullPath("SushiSwapPairs.json")}");
+        Logger.LogInformation("Writing Json output to {outputFilePath}", Path.GetFullPath("SushiSwapPairs.json"));
         await File.WriteAllTextAsync(Path.GetFullPath("SushiSwapPairs.json"), JsonSerializer.Serialize(pairAddresses));
     }
 
@@ -89,8 +94,18 @@ public class SwapPairAddressCollector : ICollector
         }
 
         ushort decimals = await DecimalsQueryHandler!.QuerySafeAsync<ERC20.DecimalsFunction, ushort>(tokenAddress);
-        string name = await NameQueryHandler!.QuerySafeAsync<ERC20.NameFunction, string>(tokenAddress);
         string symbol = await SymbolQueryHandler!.QuerySafeAsync<ERC20.SymbolFunction, string>(tokenAddress);
+
+        string? name = null;
+
+        try
+        {
+            name = await NameQueryHandler!.QuerySafeAsync<ERC20.NameFunction, string>(tokenAddress);
+        }
+        catch (RpcResponseException)
+        {
+            Logger.LogCritical("Missing 'name' function on ERC-20 Contract at address {address}", tokenAddress);
+        }
 
         tokenInfo = new TokenInfo(tokenAddress, decimals, name, symbol);
         Tokens.Add(tokenAddress, tokenInfo);
