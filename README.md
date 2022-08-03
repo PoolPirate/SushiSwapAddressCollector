@@ -8,7 +8,10 @@
 - [.NET6 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/6.0)
 
 ## Build & Run
-- `dotnet run`
+- Configure app by creating a `appsettings.json` file in the `SushiSwapAddressCollector` directory
+  - Instead of manually creating it you can copy over configurations from the `SushiSwapAddressCollector/ExampleConfigurations` directory
+  - If you do make sure to rename the file to `appsettings.json`
+- `dotnet run` (from root directory)
 
 
 # Execution Outputs
